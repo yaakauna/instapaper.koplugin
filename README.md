@@ -15,13 +15,14 @@ Download and read articles from your Instapaper account directly in KOReader.
 - **Download only** (long-press → Download) without leaving the list — enables multi-article downloads
 - **Article info on long-press**: date saved, word count, estimated reading time, progress, and source URL
 - **Manage articles**: Archive, Delete, Star (via long-press)
+- **Sync & download** fetches missing articles into your library folder
 - **Bulk download** with folder, time period, and post-download action (archive/delete/none)
 - **Auto WiFi connect** — triggers network connection automatically when needed
 - **Title injection** — missing article titles are added as a top-level heading in the downloaded HTML
 - **Reading progress** display (percentage read)
 - **Paged article lists** — 50 articles at a time with **Load more…** at the end (API v2); API v1 fetches one page of 10–500
 - **Refresh** — the reload icon at the top left of a list reloads it with the latest data, staying on the same page
-- **Continue** — for an hour after you last used a list (until KOReader restarts), **Continue: <folder> (page N)** at the top of the Instapaper menu reopens it where you left off, without a network request. Articles archived by **When finished** are left out and progress made on the device is shown. Also available as the gesture action **Instapaper: continue last list**; when there is nothing recent to continue, the gesture opens the last used folder (or Unread) fresh from the server and says so
+- **Continue** — for an hour after you last used a list (until KOReader restarts), **Continue: <folder> (page N)** at the top of **Browse articles** reopens it where you left off, without a network request. Articles archived by **When finished** are left out and progress made on the device is shown. Also available as the gesture action **Instapaper: continue last list**; when there is nothing recent to continue, the gesture opens the last used folder (or Unread) fresh from the server and says so
 - **Send to Instapaper** — Add web links to Instapaper directly from document link popups
 - **Offline queue** — Links are queued when offline and automatically sent when network becomes available
 - **Auto WiFi connect for links** — Configurable automatic network connection when adding links
@@ -97,7 +98,7 @@ Alternatively, you can create a configuration file manually:
 
 ### 3. Log In
 
-1. In the Instapaper menu, select **Log in**
+1. In the Instapaper menu, select **Advanced → Log in**
 2. Choose a method:
    - **Access token** — paste the token and tap **Login**. The plugin checks it
      against Instapaper and shows your username in the **Log out** entry.
@@ -115,9 +116,15 @@ to API v1 and asks you to try again. You can also switch by hand under
 
 ## Usage
 
+### Sync & Download
+
+Select **Sync & download** in the Instapaper main menu. It downloads missing articles from **Unread articles** by default. To include your entire account, set **Settings → Sync scope → All articles** (API v2). Sync checks the download directory for files with matching Instapaper bookmark IDs and leaves your Instapaper folders and read status alone.
+
+On Kindle, the default download directory is `/mnt/us/library/Instapaper/`. Open the downloaded files from the Instapaper folder in your library. An explicitly configured **Cache folder** takes precedence. Existing files in the old default `koreader/instapaper/` stay there unless you move them, along with their KOReader metadata.
+
 ### Browse Articles
 
-From the Instapaper menu, choose:
+From **Browse articles** in the Instapaper menu, choose:
 
 - **All articles** — Every saved article across your account, including archived articles and custom folders (API v2)
 - **Unread articles** — Your reading list
@@ -143,7 +150,7 @@ Long-pressing an article shows its metadata (date saved, word count, reading tim
 
 ### Bulk Download
 
-Select **Bulk download...** from the menu to download multiple articles at once:
+Select **Advanced → Bulk download...** to download multiple articles at once:
 
 - **Folder** — Choose which folder to download from (Unread, Starred, Archive, or any custom folder)
 - **Period** — Limit to articles saved within the last N days (0 = all)
@@ -151,13 +158,13 @@ Select **Bulk download...** from the menu to download multiple articles at once:
 
 ### Downloaded Articles
 
-Select **Downloaded articles** in the Instapaper menu to open local EPUB and HTML files without a network connection. The list uses the configured cache folder or `koreader/instapaper/` by default.
+Select **Advanced → Downloaded articles** to open local EPUB and HTML files without a network connection. The list uses the configured download directory.
 
 Tapping an article in an Instapaper folder also opens its local copy when the saved bookmark ID matches. Use **Download** in the article's long-press menu to fetch a fresh copy.
 
 ### Clear Downloads Cache
 
-Select **Clear downloads cache** to delete all downloaded files and folders (including `.sdr` metadata folders) from the downloads directory. A confirmation dialog is shown before deletion.
+Select **Advanced → Clear downloads cache** to delete downloaded articles and their metadata from the default download directory after confirmation. On Kindle, only files with Instapaper bookmark metadata are selected for deletion.
 
 ### Send Web Links to Instapaper
 

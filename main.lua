@@ -1,5 +1,6 @@
 local ButtonDialog = require("ui/widget/buttondialog")
 local DataStorage = require("datastorage")
+local Device = require("device")
 local FFIUtil = require("ffi/util")
 local InfoMessage = require("ui/widget/infomessage")
 local JSON = require("json")
@@ -1031,6 +1032,7 @@ function Instapaper:loadSettings()
     self.after_download_action = self.settings:readSetting("after_download_action") or "none"
     self.after_finish_action = self.settings:readSetting("after_finish_action") or "none"
     self.cache_folder       = self.settings:readSetting("cache_folder")
+    self.sync_scope         = self.settings:readSetting("sync_scope") or "unread"
     self.auto_connect_network = self.settings:readSetting("auto_connect_network")
     if self.auto_connect_network == nil then
         self.auto_connect_network = true
@@ -1052,6 +1054,7 @@ function Instapaper:saveSettings()
     self.settings:saveSetting("after_download_action", self.after_download_action)
     self.settings:saveSetting("after_finish_action", self.after_finish_action)
     self.settings:saveSetting("cache_folder",       self.cache_folder)
+    self.settings:saveSetting("sync_scope",         self.sync_scope)
     self.settings:saveSetting("auto_connect_network", self.auto_connect_network)
     self.settings:flush()
 end
@@ -1597,7 +1600,7 @@ function Instapaper:addToMainMenu(menu_items)
     }
 end
 
-function Instapaper:getMainMenuItems()
+function Instapaper:getBrowseMenuItems()
     local items = {
         {
             text = _("All articles"),
@@ -1640,6 +1643,55 @@ function Instapaper:getMainMenuItems()
                 end)
             end,
         },
+    }
+
+    -- Back to the list left within the last hour, as it was.
+    local continue_label = self:getLastListLabel()
+    if continue_label then
+        table.insert(items, 1, {
+            text = continue_label,
+            callback = function()
+                self:continueLastList()
+            end,
+            separator = true,
+        })
+    end
+    return items
+end
+
+function Instapaper:getMainMenuItems()
+    return {
+        {
+            text = _("Sync & download"),
+            callback = function()
+                self:ensureOnlineAndLoggedIn(function()
+                    self:runBulkDownload(self.sync_scope or "unread", 0, false, false, true)
+                end)
+            end,
+        },
+        {
+            text = _("Browse articles"),
+            sub_item_table_func = function()
+                return self:getBrowseMenuItems()
+            end,
+        },
+        {
+            text = _("Settings"),
+            sub_item_table_func = function()
+                return self:getSettingsMenuItems()
+            end,
+        },
+        {
+            text = _("Advanced"),
+            sub_item_table_func = function()
+                return self:getAdvancedMenuItems()
+            end,
+        },
+    }
+end
+
+function Instapaper:getAdvancedMenuItems()
+    return {
         {
             text = _("Bulk download..."),
             callback = function()
@@ -1676,12 +1728,6 @@ function Instapaper:getMainMenuItems()
             separator = true,
         },
         {
-            text = _("Settings"),
-            sub_item_table_func = function()
-                return self:getSettingsMenuItems()
-            end,
-        },
-        {
             text = _("API credentials"),
             keep_menu_open = true,
             callback = function()
@@ -1710,19 +1756,6 @@ function Instapaper:getMainMenuItems()
             end,
         },
     }
-
-    -- Back to the list left within the last hour, as it was.
-    local continue_label = self:getLastListLabel()
-    if continue_label then
-        table.insert(items, 1, {
-            text = continue_label,
-            callback = function()
-                self:continueLastList()
-            end,
-            separator = true,
-        })
-    end
-    return items
 end
 
 function Instapaper:ensureOnlineAndLoggedIn(callback)
@@ -1843,6 +1876,31 @@ function Instapaper:getSettingsMenuItems()
     end
 
     return {
+        choiceItem(_("Sync scope"), "sync_scope", "unread", {
+            { _("Unread articles"), "unread" },
+            { _("All articles"), "all" },
+        }),
+        {
+            text_func = function()
+                local folder = self.cache_folder
+                if not folder or folder == "" then
+                    return _("Cache folder: ") .. self:getDefaultDownloadDir()
+                end
+                if #folder > 30 then
+                    folder = "…" .. folder:sub(-29)
+                end
+                return _("Cache folder: ") .. folder
+            end,
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                self:showCacheFolderDialog(function(new_path)
+                    if new_path ~= self.cache_folder then
+                        setValue("cache_folder", new_path)
+                    end
+                    touchmenu_instance:updateItems()
+                end, self.cache_folder)
+            end,
+        },
         -- v2 lists are paged with "Load more", so the limit is v1 only.
         (function()
             local item = choiceItem(_("Article list limit (API v1)"),
@@ -1895,27 +1953,6 @@ function Instapaper:getSettingsMenuItems()
         },
         {
             text_func = function()
-                local folder = self.cache_folder
-                if not folder or folder == "" then
-                    return _("Cache folder: ") .. _("Default")
-                end
-                if #folder > 30 then
-                    folder = "…" .. folder:sub(-29)
-                end
-                return _("Cache folder: ") .. folder
-            end,
-            keep_menu_open = true,
-            callback = function(touchmenu_instance)
-                self:showCacheFolderDialog(function(new_path)
-                    if new_path ~= self.cache_folder then
-                        setValue("cache_folder", new_path)
-                    end
-                    touchmenu_instance:updateItems()
-                end, self.cache_folder)
-            end,
-        },
-        {
-            text_func = function()
                 return _("API: ") .. (self:usesV2() and "v2" or "v1")
             end,
             sub_item_table = {
@@ -1947,7 +1984,7 @@ function Instapaper:getSettingsMenuItems()
 end
 
 function Instapaper:showCacheFolderDialog(return_callback, current_folder)
-    local default_dir = DataStorage:getDataDir() .. "/instapaper"
+    local default_dir = self:getDefaultDownloadDir()
     
     local cache_dialog
     cache_dialog = MultiInputDialog:new{
@@ -2738,20 +2775,54 @@ function Instapaper:showArticleActions(bookmark, parent_menu, folder_id)
     UIManager:show(actions_dialog)
 end
 
-function Instapaper:getDownloadDir()
-    local dir
-    if self.cache_folder and self.cache_folder ~= "" then
-        dir = self.cache_folder
-    else
-        dir = DataStorage:getDataDir() .. "/instapaper"
+function Instapaper:getDefaultDownloadDir()
+    if Device:isKindle() then
+        return "/mnt/us/library/Instapaper"
     end
-    lfs.mkdir(dir)
+    return DataStorage:getDataDir() .. "/instapaper"
+end
+
+function Instapaper:getDownloadDir()
+    local dir = self.cache_folder
+    if not dir or dir == "" then
+        dir = self:getDefaultDownloadDir()
+    end
+    util.makePath(dir)
     return dir
 end
 
-function Instapaper:buildFilepath(bookmark)
+local function isDownloadedArticle(path)
+    local attributes = lfs.attributes(path)
+    return attributes and attributes.mode == "file" and attributes.size > 0
+end
+
+local function downloadedBookmarkId(path)
+    local DocSettings = require("docsettings")
+    local ok, id = pcall(function()
+        return DocSettings:open(path):readSetting("instapaper_bookmark_id")
+    end)
+    if ok and id ~= nil then
+        return tostring(id)
+    end
+end
+
+-- Keep existing filenames where possible and disambiguate title collisions.
+function Instapaper:articleDownloadPath(dir, bookmark, extension, for_write)
     local InstapaperEpub = require("instapaper_epub")
-    return InstapaperEpub.buildFilePath(self:getDownloadDir(), bookmark, "html")
+    local path = InstapaperEpub.buildFilePath(dir, bookmark, extension)
+    local id = tostring(bookmark.bookmark_id)
+    if isDownloadedArticle(path) and downloadedBookmarkId(path) == id then
+        return path
+    end
+
+    local alternate = path:sub(1, -#extension - 2) .. " [" .. id .. "]." .. extension
+    if isDownloadedArticle(alternate) and downloadedBookmarkId(alternate) == id then
+        return alternate
+    end
+    if for_write then
+        if not lfs.attributes(path) then return path end
+        if not lfs.attributes(alternate) then return alternate end
+    end
 end
 
 function Instapaper:injectTitleIfMissing(html, bookmark)
@@ -2855,14 +2926,22 @@ function Instapaper:runAfterDownloadAction(bookmark)
     end
 end
 
-function Instapaper:saveArticleHtml(bookmark, html)
-    local filepath = self:buildFilepath(bookmark)
-    local f = io.open(filepath, "w")
-    if not f then
+function Instapaper:saveArticleHtml(bookmark, html, dir)
+    local filepath = self:articleDownloadPath(dir, bookmark, "html", true)
+    if not filepath then
         return nil
     end
-    f:write(html)
-    f:close()
+    local temporary = filepath .. ".tmp"
+    local file = io.open(temporary, "w")
+    if not file then
+        return nil
+    end
+    local written = file:write(html)
+    local closed = file:close()
+    if not written or not closed or not os.rename(temporary, filepath) then
+        os.remove(temporary)
+        return nil
+    end
     return filepath
 end
 
@@ -2870,22 +2949,25 @@ end
 -- Returns filepath on success, nil on failure.
 function Instapaper:saveArticle(bookmark, html)
     local fmt = self.output_format or "html"
+    local dir = self:getDownloadDir()
     local filepath
     local is_html = true
     if fmt == "epub" then
         local InstapaperEpub = require("instapaper_epub")
+        local epub_path = self:articleDownloadPath(dir, bookmark, "epub", true)
         local err
-        filepath, err = InstapaperEpub.createEpub(
-            bookmark, html, self:getDownloadDir(), self.include_images,
-            self.designed_cover)
+        if epub_path then
+            filepath, err = InstapaperEpub.createEpub(
+                bookmark, html, dir, self.include_images, self.designed_cover, epub_path)
+        end
         if filepath then
             is_html = false
         else
             logger.warn("Instapaper: EPUB creation failed, falling back to HTML", err)
-            filepath = self:saveArticleHtml(bookmark, html)
+            filepath = self:saveArticleHtml(bookmark, html, dir)
         end
     else
-        filepath = self:saveArticleHtml(bookmark, html)
+        filepath = self:saveArticleHtml(bookmark, html, dir)
     end
     -- Record the Instapaper bookmark id for both HTML and EPUB downloads so
     -- reader-side progress can be associated with the correct remote article.
@@ -2895,7 +2977,7 @@ function Instapaper:saveArticle(bookmark, html)
 
     -- EPUB carries its metadata in the OPF (read natively by crengine), so we
     -- only need the KOReader metadata sidecar for HTML output.
-    if is_html then
+    if filepath and is_html then
         self:writeBookMetadata(filepath, bookmark, html)
     end
     return filepath
@@ -2936,28 +3018,12 @@ function Instapaper:downloadArticleOnly(bookmark)
     end)
 end
 
-local function isDownloadedArticle(path)
-    local attributes = lfs.attributes(path)
-    return attributes and attributes.mode == "file" and attributes.size > 0
-end
-
 function Instapaper:findDownloadedArticle(bookmark)
-    local InstapaperEpub = require("instapaper_epub")
-    local DocSettings = require("docsettings")
     local dir = self:getDownloadDir()
     local preferred = self.output_format == "epub" and "epub" or "html"
     local fallback = preferred == "epub" and "html" or "epub"
-    for _, extension in ipairs({ preferred, fallback }) do
-        local path = InstapaperEpub.buildFilePath(dir, bookmark, extension)
-        if isDownloadedArticle(path) then
-            -- The filename alone is ambiguous when two bookmarks share a title.
-            local settings = DocSettings:open(path)
-            local id = settings:readSetting("instapaper_bookmark_id")
-            if id ~= nil and tostring(id) == tostring(bookmark.bookmark_id) then
-                return path
-            end
-        end
-    end
+    return self:articleDownloadPath(dir, bookmark, preferred)
+        or self:articleDownloadPath(dir, bookmark, fallback)
 end
 
 function Instapaper:openArticle(bookmark, list_menu)
@@ -2990,6 +3056,23 @@ end
 -- Downloads folder
 --------------------------------------------------------------------
 
+local function listDownloadedFiles(dir)
+    local ok, next_entry, state = pcall(lfs.dir, dir)
+    if not ok then
+        return nil
+    end
+
+    local files = {}
+    for filename in next_entry, state do
+        local lower = filename:lower()
+        if (lower:match("%.epub$") or lower:match("%.html$"))
+                and isDownloadedArticle(dir .. "/" .. filename) then
+            files[#files + 1] = filename
+        end
+    end
+    return files
+end
+
 function Instapaper:clearDownloadsCache()
     local dir = self:getDownloadDir()
     local ConfirmBox = require("ui/widget/confirmbox")
@@ -3012,7 +3095,9 @@ function Instapaper:clearDownloadsCache()
     end
 
     UIManager:show(ConfirmBox:new{
-        text = _("Delete Instapaper files (.html, .epub, .sdr, .tmp) from the downloads folder?"),
+        text = Device:isKindle()
+            and _("Delete downloaded Instapaper articles and their reading data?")
+            or _("Delete Instapaper files (.html, .epub, .sdr, .tmp) from the downloads folder?"),
         ok_text = _("Delete"),
         ok_callback = function()
             self:_doClearDownloadsCache(dir)
@@ -3021,6 +3106,26 @@ function Instapaper:clearDownloadsCache()
 end
 
 function Instapaper:_doClearDownloadsCache(dir)
+    if Device:isKindle() then
+        local files = listDownloadedFiles(dir)
+        if not files then
+            UIManager:show(InfoMessage:new{ text = T(_("Could not open the downloads folder: %1"), dir) })
+            return
+        end
+        local count = 0
+        for _, filename in ipairs(files) do
+            local path = dir .. "/" .. filename
+            if downloadedBookmarkId(path) and self:deleteLocalArticle(path) then
+                count = count + 1
+            end
+        end
+        UIManager:show(InfoMessage:new{
+            text = T(_("Deleted %1 Instapaper file(s) from downloads folder."), count),
+            timeout = 3,
+        })
+        return
+    end
+
     -- Only delete files created by Instapaper plugin
     local function isInstapaperFile(filename)
         local lower = filename:lower()
@@ -3107,21 +3212,12 @@ end
 
 function Instapaper:showDownloadedArticles()
     local dir = self:getDownloadDir()
-    local ok, next_entry, state = pcall(lfs.dir, dir)
-    if not ok then
+    local files = listDownloadedFiles(dir)
+    if not files then
         UIManager:show(InfoMessage:new{
             text = T(_("Could not open the downloads folder: %1"), dir),
         })
         return
-    end
-
-    local files = {}
-    for filename in next_entry, state do
-        local lower = filename:lower()
-        if (lower:match("%.epub$") or lower:match("%.html$"))
-                and isDownloadedArticle(dir .. "/" .. filename) then
-            files[#files + 1] = filename
-        end
     end
     if #files == 0 then
         UIManager:show(InfoMessage:new{ text = _("No downloaded articles.") })
@@ -3424,23 +3520,45 @@ local function shortenForProgress(title)
     return table.concat(chars, "", 1, 45) .. "…"
 end
 
-function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete_after)
+function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete_after, missing_only)
     local Trapper = require("ui/trapper")
     -- The whole run happens inside a Trapper coroutine so that Trapper:info()
     -- can repaint between articles and let the user abort; without it the
     -- download loop blocks the UI event loop and the device looks frozen.
     Trapper:wrap(function()
-        Trapper:info(_("Fetching article list..."))
+        if not Trapper:info(_("Fetching article list...")) then
+            Trapper:clear()
+            return
+        end
+
+        local existing = {}
+        if missing_only then
+            local dir = self:getDownloadDir()
+            local files = listDownloadedFiles(dir)
+            if not files then
+                Trapper:clear()
+                UIManager:show(InfoMessage:new{
+                    text = T(_("Could not open the downloads folder: %1"), dir),
+                })
+                return
+            end
+            for _, filename in ipairs(files) do
+                local id = downloadedBookmarkId(dir .. "/" .. filename)
+                if id then
+                    existing[id] = true
+                end
+            end
+        end
 
         -- v1 caps a list at 500 articles. v2 has no cap, so page through the
         -- whole list, 500 at a time.
         local page_size = 500
         local cutoff = (days_limit and days_limit > 0)
             and (os.time() - days_limit * 86400) or nil
-        local bookmarks = {}
-        local offset = 0
+        local bookmarks, seen = {}, {}
+        local offset, skipped = 0, 0
         while true do
-            local ok, page, page_count = self:apiListBookmarks(folder_id, page_size, offset)
+            local ok, page, page_count, total = self:apiListBookmarks(folder_id, page_size, offset)
             if not ok then
                 Trapper:clear()
                 UIManager:show(InfoMessage:new{
@@ -3449,15 +3567,22 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
                 return
             end
             for _, item in ipairs(page) do
-                -- Apply days filter (client-side)
-                if not cutoff or (item.time and item.time >= cutoff) then
-                    table.insert(bookmarks, item)
+                local id = tostring(item.bookmark_id)
+                if not seen[id] and (not cutoff or (item.time and item.time >= cutoff)) then
+                    seen[id] = true
+                    if existing[id] then
+                        skipped = skipped + 1
+                    else
+                        bookmarks[#bookmarks + 1] = item
+                    end
                 end
             end
-            if not self:usesV2() or page_count < page_size then
+            offset = offset + page_count
+            if not self:usesV2() or page_count == 0
+                    or (total and offset >= total)
+                    or (not total and page_count < page_size) then
                 break
             end
-            offset = offset + page_count
             if not Trapper:info(T(_("Fetching article list... (%1)"), tostring(offset))) then
                 Trapper:clear()
                 return
@@ -3467,7 +3592,9 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
         if #bookmarks == 0 then
             Trapper:clear()
             UIManager:show(InfoMessage:new{
-                text = _("No articles match the selected filters."),
+                text = missing_only
+                    and T(_("Sync complete.\nDownloaded: 0  Skipped: %1  Failed: 0"), tostring(skipped))
+                    or _("No articles match the selected filters."),
             })
             return
         end
@@ -3476,7 +3603,8 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
         -- setPausedText writes to Trapper's singleton state, so the exit below
         -- must reset() (not just clear()) or this text leaks into every other
         -- Trapper user for the rest of the session.
-        Trapper:setPausedText(_("Bulk download paused."), _("Abort"), _("Continue"))
+        Trapper:setPausedText(missing_only and _("Sync paused.") or _("Bulk download paused."),
+            _("Abort"), _("Continue"))
         local total      = #bookmarks
         local downloaded = 0
         local failed     = 0
@@ -3507,9 +3635,9 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
                 if saved then
                     downloaded = downloaded + 1
                     -- Archive or delete after successful download
-                    if archive_after then
+                    if not missing_only and archive_after then
                         self:apiBookmarkAction("archive", bm.bookmark_id)
-                    elseif delete_after then
+                    elseif not missing_only and delete_after then
                         self:apiBookmarkAction("delete", bm.bookmark_id)
                     end
                 else
@@ -3532,9 +3660,15 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
             msg = T(_("Bulk download complete.\nDownloaded: %1  Failed: %2"),
                 tostring(downloaded), tostring(failed))
         end
-        UIManager:show(InfoMessage:new{
-            text = msg,
-        })
+        if missing_only then
+            local heading = aborted and _("Sync aborted.") or _("Sync complete.")
+            msg = heading .. "\n" .. T(_("Downloaded: %1  Skipped: %2  Failed: %3"),
+                tostring(downloaded), tostring(skipped), tostring(failed))
+            if aborted then
+                msg = msg .. "\n" .. T(_("Left: %1"), tostring(total - downloaded - failed))
+            end
+        end
+        UIManager:show(InfoMessage:new{ text = msg })
     end)
 end
 

@@ -431,7 +431,7 @@ end
 -- Build a download path named after the article title. Instapaper's numeric
 -- bookmark_id is only used as a fallback, so that untitled articles still get
 -- distinct filenames instead of all collapsing onto the same one.
--- Articles sharing a title share a filename: re-downloading overwrites.
+-- Callers can supply a different path to distinguish articles sharing a title.
 function InstapaperEpub.buildFilePath(download_dir, bookmark, ext)
     local safe_title = (bookmark.title or "")
         :gsub("[/\\%?%%%*%:%|%\"%<%>]", "_")
@@ -457,12 +457,12 @@ end
 
 -- Create a standalone EPUB from Instapaper HTML.
 -- Returns filepath on success, nil + error string on failure.
-function InstapaperEpub.createEpub(bookmark, html, download_dir, include_images, designed_cover)
+function InstapaperEpub.createEpub(bookmark, html, download_dir, include_images, designed_cover, output_path)
     if type(html) ~= "string" or html == "" then
         return nil, "empty_html"
     end
 
-    local epub_path = InstapaperEpub.buildEpubPath(download_dir, bookmark)
+    local epub_path = output_path or InstapaperEpub.buildEpubPath(download_dir, bookmark)
     local article_url = bookmark.url or ""
     local title = bookmark.title or "Untitled"
     local escaped_title = title:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
