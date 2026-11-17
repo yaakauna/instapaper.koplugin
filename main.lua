@@ -34,10 +34,12 @@ require("instapaper_doccache_guard")
 --   last_list: the last article list shown, for "Continue"
 --   finished:  bookmark ids queued by "When finished" in this run
 --   progress:  reading progress made on this device, by bookmark id
+--   library_sync_running: guards the manual download worker across instances
 local session = {
     last_list = nil,
     finished = {},
     progress = {},
+    library_sync_running = false,
 }
 
 -- Background sync (opening a book, Wi-Fi coming up, resume, closing) runs on
@@ -1664,8 +1666,11 @@ function Instapaper:getMainMenuItems()
         {
             text = _("Sync & download"),
             callback = function()
-                self:ensureOnlineAndLoggedIn(function()
-                    self:runBulkDownload(self.sync_scope or "unread", 0, false, false, true)
+                -- Let KOReader close its menu before opening the sync overlay.
+                UIManager:nextTick(function()
+                    self:ensureOnlineAndLoggedIn(function()
+                        self:syncLibrary()
+                    end)
                 end)
             end,
         },
@@ -3511,7 +3516,100 @@ local function shortenForProgress(title)
     return table.concat(chars, "", 1, 45) .. "…"
 end
 
-function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete_after, missing_only)
+-- Runs in the worker and returns only counters and any listing error.
+function Instapaper:downloadMissingArticles(folder_id)
+    local dir = self:getDownloadDir()
+    local files = listDownloadedFiles(dir)
+    if not files then
+        return nil, T(_("Could not open the downloads folder: %1"), dir)
+    end
+
+    local existing = {}
+    for _, filename in ipairs(files) do
+        local id = downloadedBookmarkId(dir .. "/" .. filename)
+        if id then
+            existing[id] = true
+        end
+    end
+
+    local result = { downloaded = 0, skipped = 0, failed = 0 }
+    local page_size = 500
+    local offset = 0
+    local seen = {}
+    repeat
+        local ok, bookmarks, count, total = self:apiListBookmarks(folder_id, page_size, offset)
+        if not ok then
+            return result, T(_("Failed to fetch articles: %1"), bookmarks)
+        end
+        for _, bookmark in ipairs(bookmarks) do
+            local id = tostring(bookmark.bookmark_id)
+            if not seen[id] then
+                seen[id] = true
+                if existing[id] then
+                    result.skipped = result.skipped + 1
+                else
+                    local saved, err = self:downloadMissingArticle(bookmark)
+                    if saved then
+                        result.downloaded = result.downloaded + 1
+                    else
+                        result.failed = result.failed + 1
+                        logger.warn("Instapaper sync: failed to download", id, tostring(err))
+                    end
+                end
+            end
+        end
+        offset = offset + count
+    until not self:usesV2() or count == 0 or (total and offset >= total)
+        or (not total and count < page_size)
+    return result
+end
+
+function Instapaper:downloadMissingArticle(bookmark)
+    local ok, saved, err = pcall(function()
+        local html, fetch_err = self:fetchArticleHtml(bookmark)
+        if not html then
+            return nil, fetch_err
+        end
+        local path = self:saveArticle(bookmark, html)
+        if not path then
+            return nil, _("Could not save article file.")
+        end
+        return path
+    end)
+    if not ok then
+        return nil, saved
+    end
+    return saved, err
+end
+
+function Instapaper:syncLibrary()
+    if session.library_sync_running then
+        return
+    end
+    session.library_sync_running = true
+    local folder_id = self.sync_scope or "unread"
+    self:runDetached(_("Syncing Instapaper articles..."), function(this)
+        return this:downloadMissingArticles(folder_id)
+    end, function(result, err)
+        session.library_sync_running = false
+        if err then
+            UIManager:show(InfoMessage:new{ text = err, timeout = 6 })
+            return
+        end
+        local Notification = require("ui/widget/notification")
+        UIManager:show(Notification:new{
+            text = T(_("Sync complete: %1 downloaded, %2 skipped, %3 failed."),
+                tostring(result.downloaded), tostring(result.skipped), tostring(result.failed)),
+            timeout = 4,
+        })
+    end, function()
+        session.library_sync_running = false
+        local Notification = require("ui/widget/notification")
+        UIManager:show(Notification:new{ text = _("Instapaper sync stopped.") })
+    end)
+end
+
+function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete_after)
     local Trapper = require("ui/trapper")
     -- The whole run happens inside a Trapper coroutine so that Trapper:info()
     -- can repaint between articles and let the user abort; without it the
@@ -3522,32 +3620,13 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
             return
         end
 
-        local existing = {}
-        if missing_only then
-            local dir = self:getDownloadDir()
-            local files = listDownloadedFiles(dir)
-            if not files then
-                Trapper:clear()
-                UIManager:show(InfoMessage:new{
-                    text = T(_("Could not open the downloads folder: %1"), dir),
-                })
-                return
-            end
-            for _, filename in ipairs(files) do
-                local id = downloadedBookmarkId(dir .. "/" .. filename)
-                if id then
-                    existing[id] = true
-                end
-            end
-        end
-
         -- v1 caps a list at 500 articles. v2 has no cap, so page through the
         -- whole list, 500 at a time.
         local page_size = 500
         local cutoff = (days_limit and days_limit > 0)
             and (os.time() - days_limit * 86400) or nil
         local bookmarks, seen = {}, {}
-        local offset, skipped = 0, 0
+        local offset = 0
         while true do
             local ok, page, page_count, total = self:apiListBookmarks(folder_id, page_size, offset)
             if not ok then
@@ -3561,11 +3640,7 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
                 local id = tostring(item.bookmark_id)
                 if not seen[id] and (not cutoff or (item.time and item.time >= cutoff)) then
                     seen[id] = true
-                    if existing[id] then
-                        skipped = skipped + 1
-                    else
-                        bookmarks[#bookmarks + 1] = item
-                    end
+                    bookmarks[#bookmarks + 1] = item
                 end
             end
             offset = offset + page_count
@@ -3583,9 +3658,7 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
         if #bookmarks == 0 then
             Trapper:clear()
             UIManager:show(InfoMessage:new{
-                text = missing_only
-                    and T(_("Sync complete.\nDownloaded: 0  Skipped: %1  Failed: 0"), tostring(skipped))
-                    or _("No articles match the selected filters."),
+                text = _("No articles match the selected filters."),
             })
             return
         end
@@ -3594,8 +3667,7 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
         -- setPausedText writes to Trapper's singleton state, so the exit below
         -- must reset() (not just clear()) or this text leaks into every other
         -- Trapper user for the rest of the session.
-        Trapper:setPausedText(missing_only and _("Sync paused.") or _("Bulk download paused."),
-            _("Abort"), _("Continue"))
+        Trapper:setPausedText(_("Bulk download paused."), _("Abort"), _("Continue"))
         local total      = #bookmarks
         local downloaded = 0
         local failed     = 0
@@ -3626,9 +3698,9 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
                 if saved then
                     downloaded = downloaded + 1
                     -- Archive or delete after successful download
-                    if not missing_only and archive_after then
+                    if archive_after then
                         self:apiBookmarkAction("archive", bm.bookmark_id)
-                    elseif not missing_only and delete_after then
+                    elseif delete_after then
                         self:apiBookmarkAction("delete", bm.bookmark_id)
                     end
                 else
@@ -3650,14 +3722,6 @@ function Instapaper:runBulkDownload(folder_id, days_limit, archive_after, delete
         else
             msg = T(_("Bulk download complete.\nDownloaded: %1  Failed: %2"),
                 tostring(downloaded), tostring(failed))
-        end
-        if missing_only then
-            local heading = aborted and _("Sync aborted.") or _("Sync complete.")
-            msg = heading .. "\n" .. T(_("Downloaded: %1  Skipped: %2  Failed: %3"),
-                tostring(downloaded), tostring(skipped), tostring(failed))
-            if aborted then
-                msg = msg .. "\n" .. T(_("Left: %1"), tostring(total - downloaded - failed))
-            end
         end
         UIManager:show(InfoMessage:new{ text = msg })
     end)
