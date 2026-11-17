@@ -6,7 +6,7 @@ Download and read articles from your Instapaper account directly in KOReader.
 
 - **Instapaper API v2** (bearer token, JSON), with API v1 kept as a fallback
 - **Log in with a personal access token**, or with email and password (xAuth, until 30 September 2027)
-- Browse **Unread**, **Starred**, **Archived**, and **custom folders**
+- Browse **All articles** (API v2), **Unread**, **Starred**, **Archived**, and **custom folders**
 - **Download and read** articles as HTML or EPUB in KOReader's built-in reader
 - **EPUB output** — articles can be saved as EPUB files with optional image inclusion
 - **Book metadata** — byline (when the article markup carries one) and source site as authors, plus an auto-generated excerpt as the book description
@@ -118,6 +118,8 @@ to API v1 and asks you to try again. You can also switch by hand under
 ### Browse Articles
 
 From the Instapaper menu, choose:
+
+- **All articles** — Every saved article across your account, including archived articles and custom folders (API v2)
 - **Unread articles** — Your reading list
 - **Starred articles** — Articles you've starred
 - **Archived articles** — Completed articles

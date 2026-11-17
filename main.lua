@@ -85,6 +85,7 @@ end
 -- Display name of a list: built-in names, else the folder name we were given.
 local function folderTitle(folder_id, folder_name)
     local folder_names = {
+        all     = _("All articles"),
         unread  = _("Unread"),
         starred = _("Starred"),
         archive = _("Archive"),
@@ -350,22 +351,35 @@ end
 --------------------------------------------------------------------
 
 -- One page of a list. folder_id is the plugin's own list name: "unread",
--- "starred", "archive" or a folder id. Returns ok, bookmarks|error, page_count,
+-- "starred", "archive", "all" or a folder id. Returns ok, bookmarks|error, page_count,
 -- total (v2 only, may be nil).
 -- v1 has no offset: it always returns the first page.
 function Instapaper:apiListBookmarks(folder_id, limit, offset)
-    if self:usesV2() then
+    local uses_v2 = self:usesV2()
+    if folder_id == "all" and not uses_v2 then
+        return false, _("All articles requires Instapaper API v2.")
+    end
+    if uses_v2 then
         local query = V2.listParams(folder_id)
         query.limit = tostring(limit)
-        if offset and offset > 0 then
-            query.offset = tostring(offset)
-        end
-        local ok, data, code, err = self:apiRequestV2("GET", "/bookmarks", query)
-        if not ok then
-            return false, httpError(code, err)
-        end
-        local bookmarks, page_count, total = V2.parseBookmarkList(data)
-        return true, bookmarks, page_count, total
+        offset = offset or 0
+        local consumed = 0
+        local bookmarks, page_count, total
+        repeat
+            if offset + consumed > 0 then
+                query.offset = tostring(offset + consumed)
+            end
+            local ok, data, code, err = self:apiRequestV2("GET", "/bookmarks", query)
+            if not ok then
+                return false, httpError(code, err)
+            end
+            bookmarks, page_count, total = V2.parseBookmarkList(data)
+            consumed = consumed + page_count
+            -- An account-wide page can contain only deleted IDs.
+        until folder_id ~= "all" or #bookmarks > 0 or page_count == 0
+            or (total and offset + consumed >= total)
+            or (not total and page_count < limit)
+        return true, bookmarks, consumed, total
     end
 
     local params = { limit = tostring(limit) }
@@ -1586,6 +1600,14 @@ end
 function Instapaper:getMainMenuItems()
     local items = {
         {
+            text = _("All articles"),
+            callback = function()
+                self:ensureOnlineAndLoggedIn(function()
+                    self:fetchAndShowArticles("all")
+                end)
+            end,
+        },
+        {
             text = _("Unread articles"),
             callback = function()
                 self:ensureOnlineAndLoggedIn(function()
@@ -2304,7 +2326,7 @@ function Instapaper:continueLastList(opts)
     local removed = 0
     for _, bm in ipairs(last.bookmarks) do
         local id = tostring(bm.bookmark_id)
-        if session.finished[id] and last.folder_id ~= "archive" then
+        if session.finished[id] and last.folder_id ~= "archive" and last.folder_id ~= "all" then
             removed = removed + 1
         else
             if session.progress[id] then

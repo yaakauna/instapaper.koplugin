@@ -43,10 +43,12 @@ function V2.buildQuery(params)
     return "?" .. table.concat(parts, "&")
 end
 
--- The plugin names lists the v1 way: "unread", "starred", "archive", or a
--- numeric folder id. Returns the GET /bookmarks query params for one of them.
+-- Map the plugin's list names and folder IDs to GET /bookmarks query params.
 function V2.listParams(folder_id)
-    if folder_id == nil or folder_id == "unread" then
+    if folder_id == "all" then
+        -- The earliest supported sync cursor includes the whole account.
+        return { since = "1" }
+    elseif folder_id == nil or folder_id == "unread" then
         return { section = "home" }
     elseif folder_id == "starred" then
         return { section = "liked" }
