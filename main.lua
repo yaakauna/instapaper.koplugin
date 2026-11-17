@@ -1627,9 +1627,9 @@ function Instapaper:getMainMenuItems()
             end,
         },
         {
-            text = _("Open downloads folder"),
+            text = _("Downloaded articles"),
             callback = function()
-                self:openDownloadsFolder()
+                self:showDownloadedArticles()
             end,
         },
         {
@@ -2425,9 +2425,7 @@ function Instapaper:showArticleMenu(bookmarks, folder_id, folder_name, paging, i
                 text = title,
                 _bookmark = bm,
                 callback = function()
-                    NetworkMgr:runWhenOnline(function()
-                        self:downloadAndOpenArticle(bm, menu)
-                    end)
+                    self:openArticle(bm, menu)
                 end,
                 hold_callback = function()
                     self:showArticleActions(bm, menu, folder_id)
@@ -2589,7 +2587,7 @@ function Instapaper:showArticleMenu(bookmarks, folder_id, folder_name, paging, i
             end
             -- An article was picked: the list stays up while it downloads,
             -- so a failed or cancelled download leaves the user in it.
-            -- downloadAndOpenArticle closes it once the article opens.
+            -- openArticle closes it once the article is ready to open.
             if item and type(item.callback) == "function" then
                 item.callback()
                 return true
@@ -2676,9 +2674,7 @@ function Instapaper:showArticleActions(bookmark, parent_menu, folder_id)
                     text = _("Open"),
                     callback = function()
                         UIManager:close(actions_dialog)
-                        NetworkMgr:runWhenOnline(function()
-                            self:downloadAndOpenArticle(bookmark, parent_menu)
-                        end)
+                        self:openArticle(bookmark, parent_menu)
                     end,
                 },
             },
@@ -2918,15 +2914,46 @@ function Instapaper:downloadArticleOnly(bookmark)
     end)
 end
 
--- list_menu: the article list it was picked from, closed once the article
--- opens. That is moving on to the article, not leaving the list for good.
-function Instapaper:downloadAndOpenArticle(bookmark, list_menu)
-    self:downloadArticleDetached(bookmark, function(filepath)
+local function isDownloadedArticle(path)
+    local attributes = lfs.attributes(path)
+    return attributes and attributes.mode == "file" and attributes.size > 0
+end
+
+function Instapaper:findDownloadedArticle(bookmark)
+    local InstapaperEpub = require("instapaper_epub")
+    local DocSettings = require("docsettings")
+    local dir = self:getDownloadDir()
+    local preferred = self.output_format == "epub" and "epub" or "html"
+    local fallback = preferred == "epub" and "html" or "epub"
+    for _, extension in ipairs({ preferred, fallback }) do
+        local path = InstapaperEpub.buildFilePath(dir, bookmark, extension)
+        if isDownloadedArticle(path) then
+            -- The filename alone is ambiguous when two bookmarks share a title.
+            local settings = DocSettings:open(path)
+            local id = settings:readSetting("instapaper_bookmark_id")
+            if id ~= nil and tostring(id) == tostring(bookmark.bookmark_id) then
+                return path
+            end
+        end
+    end
+end
+
+function Instapaper:openArticle(bookmark, list_menu)
+    local function open(filepath)
         if list_menu and type(list_menu.close_callback) == "function" then
             list_menu._picked = true
             list_menu.close_callback()
         end
         self:openDownloadedArticle(filepath)
+    end
+
+    local filepath = self:findDownloadedArticle(bookmark)
+    if filepath then
+        open(filepath)
+        return
+    end
+    NetworkMgr:runWhenOnline(function()
+        self:downloadArticleDetached(bookmark, open)
     end)
 end
 
@@ -3056,14 +3083,56 @@ function Instapaper:isDangerousPath(path)
     return false
 end
 
-function Instapaper:openDownloadsFolder()
+function Instapaper:showDownloadedArticles()
     local dir = self:getDownloadDir()
-    local FileManager = require("apps/filemanager/filemanager")
-    if FileManager.instance then
-        FileManager.instance:reinit(dir)
-    else
-        FileManager:showFiles(dir)
+    local ok, next_entry, state = pcall(lfs.dir, dir)
+    if not ok then
+        UIManager:show(InfoMessage:new{
+            text = T(_("Could not open the downloads folder: %1"), dir),
+        })
+        return
     end
+
+    local files = {}
+    for filename in next_entry, state do
+        local lower = filename:lower()
+        if (lower:match("%.epub$") or lower:match("%.html$"))
+                and isDownloadedArticle(dir .. "/" .. filename) then
+            files[#files + 1] = filename
+        end
+    end
+    if #files == 0 then
+        UIManager:show(InfoMessage:new{ text = _("No downloaded articles.") })
+        return
+    end
+    table.sort(files)
+
+    local items = {}
+    for _, filename in ipairs(files) do
+        items[#items + 1] = {
+            text = filename,
+        }
+    end
+    local menu = Menu:new{
+        title = _("Downloaded articles"),
+        item_table = items,
+        is_borderless = true,
+        is_popout = false,
+        title_bar_fm_style = true,
+        onMenuSelect = function(menu_self, item)
+            local path = dir .. "/" .. item.text
+            if not isDownloadedArticle(path) then
+                UIManager:show(InfoMessage:new{ text = _("The downloaded file is missing.") })
+                return true
+            end
+            UIManager:close(menu_self)
+            ReaderReturn.forgetArticle()
+            local ReaderUI = require("apps/reader/readerui")
+            ReaderUI:showReader(path)
+            return true
+        end,
+    }
+    UIManager:show(menu, "full")
 end
 
 --------------------------------------------------------------------

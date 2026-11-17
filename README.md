@@ -25,7 +25,7 @@ Download and read articles from your Instapaper account directly in KOReader.
 - **Send to Instapaper** — Add web links to Instapaper directly from document link popups
 - **Offline queue** — Links are queued when offline and automatically sent when network becomes available
 - **Auto WiFi connect for links** — Configurable automatic network connection when adding links
-- **Open downloads folder** shortcut in the menu
+- **Downloaded articles** lists local EPUB and HTML files for offline reading
 - **Clear downloads cache** — delete all downloaded files and folders with a single tap
 - **Persistent credentials** — stay logged in across sessions
 
@@ -147,9 +147,11 @@ Select **Bulk download...** from the menu to download multiple articles at once:
 - **Period** — Limit to articles saved within the last N days (0 = all)
 - **After download** — None, **Archive**, or **Delete from Instapaper** for each downloaded article (the downloaded file is kept)
 
-### Open Downloads Folder
+### Downloaded Articles
 
-Select **Open downloads folder** to open the local `koreader/instapaper/` directory in KOReader's file manager.
+Select **Downloaded articles** in the Instapaper menu to open local EPUB and HTML files without a network connection. The list uses the configured cache folder or `koreader/instapaper/` by default.
+
+Tapping an article in an Instapaper folder also opens its local copy when the saved bookmark ID matches. Use **Download** in the article's long-press menu to fetch a fresh copy.
 
 ### Clear Downloads Cache
 
