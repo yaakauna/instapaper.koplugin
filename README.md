@@ -120,7 +120,7 @@ to API v1 and asks you to try again. You can also switch by hand under
 
 Select **Sync & download** in the Instapaper main menu. It downloads missing articles from **Unread articles** by default. To include your entire account, set **Settings → Sync scope → All articles** (API v2). Sync checks the download directory for files with matching Instapaper bookmark IDs and leaves your Instapaper folders and read status alone.
 
-The menu closes when sync starts. A progress overlay stays visible while a separate process downloads and saves articles. When it finishes, the overlay closes and the summary disappears automatically. Tap the progress overlay to cancel a running sync.
+The progress overlay stays over the Instapaper menu while a separate process downloads and saves articles. A successful sync closes the menu and shows a brief summary. A failure or cancellation leaves the menu open so you can retry. Tap the progress overlay to cancel a running sync.
 
 On Kindle, the default download directory is `/mnt/us/library/Instapaper/`. Open the downloaded files from the Instapaper folder in your library. An explicitly configured **Cache folder** takes precedence. Existing files in the old default `koreader/instapaper/` stay there unless you move them, along with their KOReader metadata.
 

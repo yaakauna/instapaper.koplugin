@@ -1665,11 +1665,11 @@ function Instapaper:getMainMenuItems()
     return {
         {
             text = _("Sync & download"),
-            callback = function()
-                -- Let KOReader close its menu before opening the sync overlay.
+            keep_menu_open = true,
+            callback = function(menu)
                 UIManager:nextTick(function()
                     self:ensureOnlineAndLoggedIn(function()
-                        self:syncLibrary()
+                        self:syncLibrary(menu)
                     end)
                 end)
             end,
@@ -3582,19 +3582,26 @@ function Instapaper:downloadMissingArticle(bookmark)
     return saved, err
 end
 
-function Instapaper:syncLibrary()
+function Instapaper:syncLibrary(menu)
     if session.library_sync_running then
         return
     end
     session.library_sync_running = true
     local folder_id = self.sync_scope or "unread"
+    logger.info("Instapaper: library sync started", folder_id)
     self:runDetached(_("Syncing Instapaper articles..."), function(this)
         return this:downloadMissingArticles(folder_id)
     end, function(result, err)
         session.library_sync_running = false
         if err then
+            logger.warn("Instapaper: library sync did not complete", err)
             UIManager:show(InfoMessage:new{ text = err, timeout = 6 })
             return
+        end
+        logger.info("Instapaper: library sync finished", result.downloaded, result.skipped, result.failed)
+        if result.failed == 0 and menu and type(menu.closeMenu) == "function"
+                and UIManager:isWidgetShown(menu.show_parent or menu) then
+            menu:closeMenu()
         end
         local Notification = require("ui/widget/notification")
         UIManager:show(Notification:new{
@@ -3604,6 +3611,7 @@ function Instapaper:syncLibrary()
         })
     end, function()
         session.library_sync_running = false
+        logger.info("Instapaper: library sync stopped")
         local Notification = require("ui/widget/notification")
         UIManager:show(Notification:new{ text = _("Instapaper sync stopped.") })
     end)
