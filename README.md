@@ -9,7 +9,7 @@ Download and read articles from your Instapaper account directly in KOReader.
 - Browse **All articles** (API v2), **Unread**, **Starred**, **Archived**, and **custom folders**
 - **Download and read** articles as HTML or EPUB in KOReader's built-in reader
 - **EPUB output** — articles can be saved as EPUB files with optional image inclusion
-- **Book metadata** — byline (when the article markup carries one) and source site as authors, plus an auto-generated excerpt as the book description
+- **Book metadata** — source domain as the library author, plus an auto-generated excerpt as the book description
 - **Cover image** — a designed cover is drawn for the book: title on top, the article's lead image in a landscape band in the middle, author at the bottom (EPUB; can be turned off, and falls back to the bare lead image)
 - **Chapters from headings** — the article's `<h1>`–`<h6>` levels become a nested table of contents in the EPUB
 - **Download only** (long-press → Download) without leaving the list — enables multi-article downloads
@@ -257,13 +257,9 @@ v1 returns no author at all. Neither gives a usable excerpt or cover, so the
 rest below is derived from bytes the plugin has already downloaded — no article
 ever costs an extra HTTP request for metadata:
 
-- **Authors** — the source site (from the URL host) is always written. The
-  byline from API v2 is written above it; on v1 (or when v2 has none), a
-  `<meta name="author">`, `article:author`, `rel="author"` or
-  `itemprop="author"` in the article HTML is used instead. Two
-  `dc:creator` entries: crengine joins them with a newline and KOReader's book
-  information shows one per line. Guesses that look like a date, a URL or a
-  sentence are dropped — no author is better than a wrong one.
+- **Authors** — the source domain is the sole library author for EPUB and HTML.
+  Designed covers can still show the byline supplied by Instapaper or found in
+  the article markup.
 - **Description** — Instapaper's own `description` is used when it has one (on
   v1 it is user-supplied and empty for most articles; v2 falls back to the
   article's opening text). Otherwise a ~320-character excerpt is built from the

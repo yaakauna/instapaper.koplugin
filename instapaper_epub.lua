@@ -202,12 +202,12 @@ end
 
 -- Site name, e.g. "https://www.example.com/a/b.html" -> "example.com".
 function InstapaperEpub.deriveSiteName(url)
-    if not url or url == "" then return nil end
-    local domain = url:match("^https?://([^/]+)")
-    if not domain then return nil end
-    domain = domain:gsub("^www%.", "")
-    if domain == "" then return nil end
-    return domain
+    if type(url) ~= "string" then return nil end
+    local authority = url:lower():match("^https?://([^/?#%s]+)")
+    if not authority then return nil end
+    local host = authority:gsub("^.*@", ""):gsub(":%d+$", ""):gsub("%.$", "")
+    host = host:gsub("^www%.", "")
+    if host ~= "" then return host end
 end
 
 --------------------------------------------------------------------
@@ -571,9 +571,7 @@ function InstapaperEpub.createEpub(bookmark, html, download_dir, include_images,
 </container>]], mtime)
 
     -- OEBPS/content.opf
-    -- crengine joins several dc:creator entries with newlines, and KOReader's
-    -- book information renders them one per line, so byline and source site
-    -- can both be shown without a publisher field (which KOReader never reads).
+    -- Use the source domain as the library author so articles group by site.
     local site_str = InstapaperEpub.deriveSiteName(article_url)
     -- Instapaper's description is user-supplied and usually empty; fall back
     -- to the excerpt we built from the article text itself.
@@ -581,9 +579,6 @@ function InstapaperEpub.createEpub(bookmark, html, download_dir, include_images,
         and bookmark.description or excerpt_str
 
     local meta_extra = ""
-    if author_str then
-        meta_extra = meta_extra .. "    <dc:creator>" .. xmlEsc(author_str) .. "</dc:creator>\n"
-    end
     if site_str then
         meta_extra = meta_extra .. "    <dc:creator>" .. xmlEsc(site_str) .. "</dc:creator>\n"
     end

@@ -2861,16 +2861,7 @@ function Instapaper:writeBookMetadata(filepath, bookmark, html)
     local title = bookmark.title
     if title == "" then title = nil end
 
-    -- Byline (when the article markup happens to carry one) above the source
-    -- site, matching how crengine reports several dc:creator entries in EPUBs.
-    local site = InstapaperEpub.deriveSiteName(bookmark.url)
-    local author = html and InstapaperEpub.extractAuthor(html) or nil
-    local authors
-    if author and site then
-        authors = author .. "\n" .. site
-    else
-        authors = author or site
-    end
+    local authors = InstapaperEpub.deriveSiteName(bookmark.url)
 
     local description = bookmark.description
     if description == "" then description = nil end
